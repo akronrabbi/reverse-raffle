@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reverse Raffle — Live Draw</title>
+<meta name="description" content="A modern reverse raffle (last ticket standing) for the big screen: prize calls, Final Three Deal, grand prize.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-theme="navy">
+<!-- ===================== SETUP ===================== -->
+<div id="setup">
+  <header class="su-head">
+    <div class="brand">
+      <div class="brand-mark"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 0 0 6v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3a2 2 0 0 0 0-6V6a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1z"/><path d="M14 5v14" stroke-dasharray="2 2.5"/></svg></div>
+      <div><h1>Reverse Raffle</h1><p>Last ticket standing · setup &amp; control</p></div>
+    </div>
+    <span class="pill" id="gamePill"><span class="dot"></span><span id="gamePillText">No game yet</span></span>
+    <span class="pill hidden" id="displayPill"><span class="dot"></span>Show window connected</span>
+    <a class="btn ghost hidden" id="dlOffline" href="reverse-raffle.html" download="reverse-raffle.html" title="One file that works with no internet">⬇ Offline copy</a>
+    <button class="btn" id="btnPopout" title="Open the show in its own window for the projector; keep these controls on the laptop">⧉ Open show window</button>
+    <button class="btn primary lg" id="btnOpenShow">▶ Open show screen</button>
+  </header>
+
+  <div class="livebar hidden" id="livebar">
+    <div class="card">
+      <span class="pill" id="lbPhase"><span class="dot"></span><span>Paused</span></span>
+      <span class="lstat">Called <b id="lbCalled">0</b> <span>/</span> Remaining <b id="lbRem">0</b></span>
+      <span class="lstat" id="lbNext"></span>
+      <button class="btn primary" data-cmd="toggle" id="lbPlay">▶ Start</button>
+      <button class="btn" data-cmd="next" title="Call one name now (N)">Call next</button>
+      <div class="lspeed"><span class="hint">Speed</span><input type="range" id="lbSpeed" min="0.3" max="10" step="0.1"><b id="lbSpeedV">4.0s</b></div>
+      <button class="btn" data-cmd="rebuy">Re-buy / remove…</button>
+      <button class="btn" data-cmd="undo">↶ Undo</button>
+      <button class="btn" data-cmd="report">Report</button>
+      <button class="btn restart" data-cmd="restart" title="Start this draw over from the beginning with the same tickets, prizes and settings">↻ Restart game (same settings)</button>
+    </div>
+  </div>
+
+  <main class="su-main">
+    <section class="setups-bar" id="setupsBar" aria-label="Saved setups">
+      <div class="sb-id">
+        <span class="sb-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg></span>
+        <span class="sb-tt"><b>Saved setups</b><span class="sb-cur" id="setupCur">Not saved yet</span></span>
+      </div>
+      <div class="sb-acts">
+        <div class="sb-load">
+          <button type="button" class="btn" id="btnLoadSetup" aria-haspopup="true" aria-expanded="false">Load setup <svg class="sb-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+          <div class="sb-menu hidden" id="setupMenu" role="menu"></div>
+        </div>
+        <button type="button" class="btn primary" id="btnSaveSetup">Save setup as…</button>
+        <span class="sb-sep"></span>
+        <button type="button" class="btn ghost" id="btnExportSetup" title="Download this setup as a file to use on another laptop or in the offline copy">⬇ Export setup file</button>
+        <button type="button" class="btn ghost" id="btnImportSetup" title="Open a setup file (.json)">⬆ Import setup file</button>
+        <input type="file" id="inSetupFile" accept=".json,application/json" class="hidden">
+      </div>
+    </section>
+    <div class="acc-bar" id="accBar">
+      <span class="acc-bar-t">Setup</span>
+      <span class="hint">Click a section to open it</span>
+      <span class="acc-bar-btns"><button type="button" class="btn sm ghost" id="btnExpandAll">Expand all</button><button type="button" class="btn sm ghost" id="btnCollapseAll">Collapse all</button></span>
+    </div>
+    <!-- tickets -->
+    <section class="card" id="cardTickets">
+      <h2><span class="num">1</span>Tickets</h2>
+      <p class="sub">Each line is one ticket. The same name can appear more than once — every line is its own ticket.</p>
+      <div class="row" style="justify-content:space-between">
+        <div class="seg" id="modeSeg"><button data-mode="names">Names</button><button data-mode="numbers">Ticket numbers</button></div>
+        <div class="count-big" id="ticketCount">0<small>tickets</small></div>
+      </div>
+      <div id="namesPane">
+        <div class="row" style="margin-top:12px">
+          <label class="btn primary sm" for="fileIn">⇪ Upload Excel / CSV</label>
+          <input type="file" id="fileIn" accept=".xlsx,.xls,.csv,.ods,.txt" hidden>
+          <button class="btn sm" id="btnSample">Load sample (260)</button>
+          <button class="btn sm" id="btnSortAZ">Sort A–Z</button>
+          <button class="btn sm danger" id="btnClearNames">Clear</button>
+        </div>
+        <div class="picker hidden" id="picker"></div>
+        <div class="drop" id="drop" style="margin-top:10px">Drop an .xlsx / .xls / .csv file here, or paste names below (one per line). Optional ticket number: <code>A017 | Moshe Cohen</code></div>
+        <textarea id="namesText" spellcheck="false" placeholder="Moshe Cohen&#10;Sarah Levi&#10;Moshe Cohen&#10;…" style="margin-top:10px"></textarea>
+        <div class="hint" id="namesInfo"></div>
+      </div>
+      <div id="numbersPane" class="hidden">
+        <p class="hint" style="margin-top:12px">Add one or more ticket sequences. Mark a sequence <b>Exclude</b> to take out unsold tickets (e.g. A141–A150).</p>
+        <div class="seqrow seqhead"><span>Prefix</span><span>From</span><span>To</span><span>Digits</span><span>Colour</span><span>Exclude</span><span></span></div>
+        <div id="seqRows"></div>
+        <div class="row"><button class="btn sm" id="btnAddSeq">+ Add sequence</button><span class="hint" id="seqInfo"></span></div>
+      </div>
+      <h3>Board</h3>
+      <div class="row">
+        <label class="field"><span>Grid order</span><select id="gridOrder"><option value="entered">As entered</option><option value="alpha">A–Z</option><option value="shuffle">Shuffled</option></select></label>
+        <label class="switch" id="showNoWrap"><input type="checkbox" id="showNumbers"> Show ticket numbers</label>
+      </div>
+      <div class="hint warn hidden" id="namesLocked" style="margin-top:10px"></div>
+    </section>
+
+    <!-- prizes -->
+    <section class="card" id="cardPrizes">
+      <h2><span class="num">2</span>Prizes</h2>
+      <p class="sub">A prize goes to the ticket called at that call number. Example: call #20 wins a $50 gift card.</p>
+      <div class="row">
+        <label class="field" style="flex:2"><span>Prize list</span><select id="listSel"></select></label>
+        <button class="btn sm" id="btnListNew">New</button>
+        <button class="btn sm" id="btnListDup">Duplicate</button>
+        <button class="btn sm" id="btnListRen">Rename</button>
+        <button class="btn sm danger" id="btnListDel">Delete</button>
+      </div>
+      <div class="plist" id="prizeRows" style="margin-top:12px"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm primary" id="btnAddPrize">+ Add prize</button>
+        <button class="btn sm" id="btnSortPrizes">Sort by call #</button>
+        <button class="btn sm danger" id="btnClearPrizes">Clear list</button>
+        <span class="hint" id="prizeSummary"></span>
+      </div>
+      <h3>Quick generator</h3>
+      <div class="row">
+        <label class="field" style="min-width:90px"><span>Every</span><input type="number" id="genEvery" min="1" value="20"></label>
+        <label class="field" style="min-width:90px"><span>Starting at call #</span><input type="number" id="genStart" min="1" value="20"></label>
+        <label class="field" style="min-width:90px"><span>Up to call #</span><input type="number" id="genEnd" min="1" placeholder="auto"></label>
+        <label class="field" style="flex:2"><span>Prize text ({n} = prize no., {call} = call no.)</span><input type="text" id="genText" value="Prize #{n}"></label>
+        <button class="btn sm" id="btnGen" style="align-self:flex-end">Generate</button>
+      </div>
+      <h3>Finale</h3>
+      <div class="row">
+        <label class="field" style="flex:2"><span>Grand prize (“Play for it all” amount)</span><input type="text" id="grandPrize" placeholder="e.g. $3,000"></label>
+        <label class="field" style="min-width:110px;flex:0 0 120px"><span>Finalists (last N)</span><input type="number" id="finalists" min="0" max="50"></label>
+      </div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="splitOn"> Offer the finalists the <b id="dealNameL">Final Three Deal</b></label>
+      </div>
+      <div class="row" id="dealRow">
+        <label class="field"><span>Deal: each runner-up gets</span><input type="text" id="dealRunner" placeholder="e.g. $500"></label>
+        <label class="field"><span>Deal: last one standing gets</span><input type="text" id="dealWinner" placeholder="e.g. $2,000"></label>
+      </div>
+      <div class="row"><label class="field"><span>Deal question on screen</span><input type="text" id="splitPrompt"></label></div>
+      <div class="hint deal-prev" id="dealPreview"></div>
+    </section>
+
+    <!-- draw -->
+    <section class="card" id="cardDraw">
+      <h2><span class="num">3</span>Draw &amp; animation</h2>
+      <p class="sub">Speed can also be changed live during the show (<span class="kbd">↑</span> <span class="kbd">↓</span> or <span class="kbd">+</span> <span class="kbd">−</span>).</p>
+      <div class="row">
+        <label class="field" style="flex:3"><span>Seconds between calls</span><input type="range" id="speedR" min="0.3" max="10" step="0.1"></label>
+        <label class="field" style="flex:0 0 100px"><span>&nbsp;</span><input type="number" id="speedN" min="0.05" max="60" step="0.1"></label>
+      </div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="finalOn"> Slower final stretch</label>
+        <label class="field" style="flex:0 0 120px"><span>Last … tickets</span><input type="number" id="finalLast" min="2"></label>
+        <label class="field" style="flex:0 0 120px"><span>Seconds per call</span><input type="number" id="finalSpeed" min="0.05" step="0.5"></label>
+      </div>
+      <h3>When a prize is won</h3>
+      <div class="row">
+        <div class="seg" id="winPauseSeg"><button data-v="space">Wait for SPACE</button><button data-v="timed">Pause for seconds</button></div>
+        <label class="field" style="flex:0 0 120px" id="winSecWrap"><span>Seconds</span><input type="number" id="winSec" min="0.2" step="0.5"></label>
+      </div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="suspense"> Extra suspense (drumroll) on prize calls</label>
+      </div>
+      <h3>Countdown</h3>
+      <div class="row">
+        <label class="field" style="flex:0 0 140px"><span>Pre-draw countdown (s)</span><input type="number" id="countdown" min="0" max="10"></label>
+        <label class="switch"><input type="checkbox" id="cdPrize"> Also before each prize call</label>
+      </div>
+      <h3>Call animation</h3>
+      <div class="anims" id="anims"></div>
+    </section>
+
+    <!-- look -->
+    <section class="card" id="cardLook">
+      <h2><span class="num">4</span>Look &amp; layout</h2>
+      <p class="sub">Shown on the big screen.</p>
+      <div class="row"><label class="field"><span>Event title</span><input type="text" id="title" placeholder="e.g. Annual Dinner Reverse Raffle"></label></div>
+      <div class="row"><label class="field"><span>Subtitle (optional)</span><input type="text" id="subtitle" placeholder="e.g. Chabad of Akron · 5787"></label></div>
+      <h3>Theme</h3>
+      <div class="themes" id="themes"></div>
+      <div class="row" style="margin-top:10px"><label class="switch"><input type="checkbox" id="bgAnim"> Animated background glow</label></div>
+      <h3>Images</h3>
+      <div class="row imgslot"><div class="thumb" id="thLogo"></div><div><b>Logo</b><div class="row"><label class="btn sm" for="inLogo">Upload</label><input type="file" id="inLogo" accept="image/*" hidden><button class="btn sm ghost" data-clear="logo">Remove</button><select id="logoPos"><option value="left">Header left</option><option value="right">Header right</option></select><label class="switch"><input type="checkbox" id="logoWhite"> Show logo in white</label></div><div class="hint">“Show logo in white” turns a dark logo white so it shows up on a dark screen.</div></div></div>
+      <div class="row imgslot"><div class="thumb" id="thBg"></div><div style="flex:1"><b>Background image</b><div class="row"><label class="btn sm" for="inBg">Upload</label><input type="file" id="inBg" accept="image/*" hidden><button class="btn sm ghost" data-clear="bg">Remove</button><span class="hint">Dim</span><input type="range" id="bgDim" min="0" max="0.95" step="0.05" style="width:120px"></div></div></div>
+      <h3>Layout</h3>
+      <div class="row">
+        <div class="field" style="flex:0 0 auto"><span>Big “just called” name</span><div class="seg" id="namePosSeg"><button type="button" data-v="top">Top</button><button type="button" data-v="center">Center of the board</button></div></div>
+      </div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="bigBoard"> Big Board only (no animation, full-screen grid)</label>
+      </div>
+      <div class="row">
+        <label class="field"><span>Animation area size</span><input type="range" id="stageShare" min="12" max="42" step="1"></label>
+        <label class="field" style="flex:0 0 170px"><span>Winners panel</span><select id="winnersPanel"><option value="side">Side panel</option><option value="top">Across the top</option><option value="both">Top + side</option><option value="off">Off</option></select></label>
+      </div>
+    </section>
+
+    <!-- ads -->
+    <section class="card" id="cardAds">
+      <h2><span class="num">5</span>Welcome screen, sponsors &amp; ticker</h2>
+      <p class="sub">Promote sponsors before, during and after the draw. Press <span class="kbd">W</span> on the show to bring up the welcome screen any time.</p>
+      <h3>Welcome / idle screen</h3>
+      <div class="row imgslot"><div class="thumb" id="thWelcome"></div><div><b>Welcome image</b> <span class="hint">(logo or sponsor; uses the logo if empty)</span><div class="row"><label class="btn sm" for="inWelcome">Upload</label><input type="file" id="inWelcome" accept="image/*" hidden><button class="btn sm ghost" data-clear="welcome">Remove</button></div></div></div>
+      <div class="row"><label class="field"><span>Welcome headline</span><input type="text" id="welTitle" placeholder="(uses the event title)"></label><label class="field"><span>Line under it</span><input type="text" id="welSub"></label></div>
+      <div class="row">
+        <label class="switch"><input type="checkbox" id="welBefore"> Before the draw</label>
+        <label class="switch"><input type="checkbox" id="welPaused"> While paused, after</label>
+        <input type="number" id="welPausedSec" min="3" style="width:80px"> <span class="hint">seconds</span>
+        <label class="switch"><input type="checkbox" id="welAfter"> After the draw</label>
+      </div>
+      <h3>Sponsor panel</h3>
+      <div class="row imgslot"><div class="thumb" id="thSponsor"></div><div><b>Sponsor image</b><div class="row"><label class="btn sm" for="inSponsor">Upload</label><input type="file" id="inSponsor" accept="image/*" hidden><button class="btn sm ghost" data-clear="sponsor">Remove</button>
+        <select id="sponsorPos"><option value="off">Hidden</option><option value="left">Left side</option><option value="right">Right side</option></select>
+        <select id="sponsorSize"><option value="small">Small</option><option value="large">Large</option></select></div></div></div>
+      <h3>News ticker</h3>
+      <div class="row"><label class="switch"><input type="checkbox" id="tickOn"> Show a ticker along the bottom</label></div>
+      <div class="row"><label class="field"><span>Ticker text</span><input type="text" id="tickText" placeholder="Thank you to our sponsors …"></label></div>
+      <div class="row">
+        <label class="field" style="flex:0 0 120px"><span>Font size</span><input type="number" id="tickSize" min="1" max="8" step="0.2"></label>
+        <label class="field" style="flex:0 0 120px"><span>Speed</span><select id="tickSpeed"><option value="slow">Slow</option><option value="med">Medium</option><option value="fast">Fast</option></select></label>
+        <label class="field" style="flex:0 0 70px"><span>Text</span><input type="color" id="tickFg"></label>
+        <label class="field" style="flex:0 0 70px"><span>Background</span><input type="color" id="tickBg"></label>
+      </div>
+    </section>
+
+    <!-- sound -->
+    <section class="card" id="cardSound">
+      <h2><span class="num">6</span>Sound &amp; voice</h2>
+      <p class="sub">All sounds are generated live — no files needed.</p>
+      <div class="row"><label class="switch"><input type="checkbox" id="soundOn"> Sound effects (ticks, drumroll, fanfare)</label><button class="btn sm" id="btnTestSound">Test</button></div>
+      <div class="row"><label class="field"><span>Volume</span><input type="range" id="volume" min="0" max="1" step="0.05"></label></div>
+      <div class="row"><label class="switch"><input type="checkbox" id="ttsOn"> Read each called name aloud</label><button class="btn sm" id="btnTestVoice">Test</button></div>
+      <div class="row">
+        <label class="field" style="flex:2"><span>Voice</span><select id="ttsVoice"><option value="">Default voice</option></select></label>
+        <label class="field"><span>Rate</span><input type="range" id="ttsRate" min="0.6" max="1.6" step="0.05"></label>
+      </div>
+      <div class="row"><label class="switch"><input type="checkbox" id="ttsOnlyWinners"> Only read winners aloud</label></div>
+    </section>
+
+    <!-- game -->
+    <section class="card wide" id="cardGame">
+      <h2><span class="num">7</span>Game, results &amp; reports</h2>
+      <p class="sub" id="gameSummary">No game in progress. Press “Open show screen” to start a new draw with the tickets above.</p>
+      <div class="row">
+        <button class="btn primary" id="btnOpenShow2">▶ Open show screen</button>
+        <button class="btn restart" data-cmd="restart" id="btnRestart" title="Start this draw over from the beginning with the same tickets, prizes and settings">↻ Restart game (same settings)</button>
+        <button class="btn" data-cmd="undo">↶ Undo last action</button>
+        <button class="btn" data-cmd="rebuy">Re-buy / remove…</button>
+        <button class="btn" data-cmd="report">View / print draw report</button>
+        <button class="btn" id="btnExport">⬇ Results CSV</button>
+        <button class="btn" id="btnExportAudit">⬇ Audit log CSV</button>
+        <button class="btn danger" id="btnReset" title="Clear the draw and go back to setup">Reset game…</button>
+      </div>
+      <table class="wtable" id="winTable"></table>
+      <h3>Keyboard on the show screen</h3>
+      <p class="hint"><span class="kbd">Space</span> pause / continue · <span class="kbd">N</span> call next · <span class="kbd">F</span> full screen · <span class="kbd">↑</span>/<span class="kbd">↓</span> or <span class="kbd">+</span>/<span class="kbd">−</span> speed · <span class="kbd">U</span> undo · <span class="kbd">R</span> re-buy · <span class="kbd">W</span> welcome screen · <span class="kbd">E</span> back to setup · <span class="kbd">M</span> sound · <span class="kbd">V</span> voice · <span class="kbd">D</span>/<span class="kbd">P</span> Final Three Deal: take the deal / play for it all · <span class="kbd">?</span> help</p>
+    </section>
+  </main>
+</div>
+
+<!-- ===================== SHOW ===================== -->
+<div id="show" class="hidden">
+  <div class="bg-layer"><div class="bg-img" id="bgImg"></div><div class="bg-aurora"></div><div class="bg-dim" id="bgDimL"></div></div>
+  <header class="s-head" id="sHead">
+    <div class="s-brand"><img id="sLogo" alt="" class="hidden"><div class="s-title" id="sTitle"></div></div>
+    <div class="s-wtop" id="sWinTop"></div>
+    <div class="s-chip" id="sChip"><span class="dot"></span><span id="sChipT">Ready</span></div>
+  </header>
+  <div class="s-board" id="sBoard">
+    <aside class="s-sponsor s-panel hidden" id="sSpL"><img alt="Sponsor"></aside>
+    <div class="s-maincol" id="sMain">
+      <div class="s-stage-row" id="sStageRow">
+        <div class="s-panel s-stage" id="sStage"><div class="lever" id="sLever" aria-hidden="true"><div class="lever-slot"></div><div class="lever-arm" id="sLeverArm"></div><div class="lever-knob" id="sLeverKnob"></div><div class="lever-hub"></div></div><div class="s-stage-label" id="sStageLabel">Reverse raffle</div><div class="s-stage-win" id="sStageWin"></div><div class="s-stage-sub" id="sStageSub"></div></div>
+      </div>
+      <div class="s-gridwrap" id="sGridWrap"><div class="s-grid" id="sGrid"></div><div class="s-spot" id="sSpot"></div></div>
+    </div>
+    <div class="s-right" id="sRight">
+      <div class="s-panel s-count" id="sCount">
+        <div class="nums"><div><div class="k">Called</div><div class="v" id="sCalled">0</div></div><div><div class="k">Remaining</div><div class="v rem" id="sRem">0</div></div></div>
+        <div class="bar"><i id="sBar" style="width:0"></i></div>
+        <div class="sp" id="sSpeedInfo"></div>
+      </div>
+      <div class="s-panel s-next" id="sNext"></div>
+      <aside class="s-side s-panel" id="sSide"><h3>Winners</h3><ol id="sWinList"></ol><div class="s-grandbox" id="sGrandBox"></div></aside>
+    </div>
+    <aside class="s-sponsor s-panel hidden" id="sSpR"><img alt="Sponsor"></aside>
+  </div>
+  <div class="s-ticker hidden" id="sTicker"><div class="s-ticker-track" id="sTickTrack"></div></div>
+
+  <div class="ov" id="ovWinner"><div class="wcard">
+    <div class="kick" id="wKick">Winner · Call #20</div>
+    <svg class="trophy" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"><path d="M20 8h24v14a12 12 0 0 1-24 0z" fill="currentColor" fill-opacity=".18"/><path d="M20 12H10v4a10 10 0 0 0 10 10M44 12h10v4a10 10 0 0 1-10 10"/><path d="M32 34v10M24 56h16M26 44h12l2 12H24z"/></svg>
+    <div><span class="w-no hidden" id="wNo"></span></div>
+    <div class="w-name" id="wName"></div>
+    <div class="w-prize" id="wPrize"></div>
+    <div class="w-hint" id="wHint"></div>
+  </div></div>
+  <div class="ov" id="ovFinal"><div class="f-wrap">
+    <div class="kick" id="fKick">Final round</div>
+    <div class="f-title gold" id="fTitle">Our 3 finalists</div>
+    <div class="f-cards" id="fCards"></div>
+    <div class="f-prompt" id="fPrompt"></div>
+    <div class="f-deal" id="fDeal">
+      <div class="f-opt f-opt-deal"><div class="f-opt-k">Take the deal</div><div class="f-opt-l"><b id="fDealRu"></b><span id="fDealRuT"></span></div><div class="f-opt-l"><b id="fDealWin"></b><span>last one standing</span></div></div>
+      <div class="f-or">or</div>
+      <div class="f-opt f-opt-all"><div class="f-opt-k">Play for it all</div><div class="f-opt-amt gold" id="fAll"></div><div class="f-opt-l"><span>last one standing takes it all</span></div></div>
+    </div>
+    <div class="f-btns" id="fBtns"><button class="btn lg" data-cmd="deal" id="fSplit">Take the deal <span class="kbd">D</span></button><button class="btn primary lg" data-cmd="continue" id="fCont">Play for it all <span class="kbd">P</span></button></div>
+  </div></div>
+  <div class="ov ov-grand" id="ovGrand"><div class="rays"></div><div class="g-wrap">
+    <div class="g-kick" id="gKick">Grand prize winner</div>
+    <div class="g-name gold" id="gName"></div>
+    <div class="g-prize" id="gPrize"></div>
+    <div class="g-sub" id="gSub"></div>
+  </div></div>
+  <div class="ov ov-cd" id="ovCd"><div class="cd-ring"></div><div class="cd-num gold" id="cdNum">3</div></div>
+  <div class="ov ov-welcome" id="ovWel"><div class="bg-layer" style="z-index:-1"><div class="bg-aurora" style="opacity:1"></div></div><div class="wel">
+    <div class="wel-badge" id="welBadge">Reverse raffle</div>
+    <img id="welImg" alt="" class="hidden">
+    <div class="wel-title gold" id="welTitleT"></div>
+    <div class="wel-sub" id="welSubT"></div>
+  </div></div>
+  <div class="s-help hidden" id="sHelp">
+    <b style="display:block;margin-bottom:6px">Keyboard</b>
+    <div><span>Pause / continue</span><span class="kbd">Space</span></div>
+    <div><span>Call next name now</span><span class="kbd">N</span></div>
+    <div><span>Full screen</span><span class="kbd">F</span></div>
+    <div><span>Slower / faster</span><span><span class="kbd">↑</span> <span class="kbd">↓</span> <span class="kbd">+</span> <span class="kbd">−</span></span></div>
+    <div><span>Undo last action</span><span class="kbd">U</span></div>
+    <div><span>Re-buy / remove</span><span class="kbd">R</span></div>
+    <div><span>Welcome screen</span><span class="kbd">W</span></div>
+    <div><span>Sound on/off · voice</span><span><span class="kbd">M</span> <span class="kbd">V</span></span></div>
+    <div><span>Final Three Deal: take the deal · play for it all</span><span><span class="kbd">D</span> <span class="kbd">P</span></span></div>
+    <div><span>Back to setup</span><span class="kbd">E</span></div>
+  </div>
+  <div class="s-drawer" id="sDrawer">
+    <button class="btn primary sm" data-cmd="toggle" id="dPlay">▶ Start</button>
+    <button class="btn sm" data-cmd="next">Next</button>
+    <div class="sep"></div>
+    <div class="sp"><span>Speed</span><input type="range" id="dSpeed" min="0.3" max="10" step="0.1"><b id="dSpeedV">4s</b></div>
+    <div class="sep"></div>
+    <button class="btn sm" data-cmd="undo" title="Undo (U)">↶</button>
+    <button class="btn sm" data-cmd="rebuy" title="Re-buy / remove (R)">Re-buy</button>
+    <button class="btn sm" data-cmd="sound" id="dSound" title="Sound (M)">🔊</button>
+    <button class="btn sm" data-cmd="voice" id="dVoice" title="Voice (V)">🗣</button>
+    <button class="btn sm" data-cmd="restart" title="Restart game, same settings">↻ Restart</button>
+    <button class="btn sm" data-cmd="welcome" title="Welcome screen (W)">W</button>
+    <button class="btn sm" data-cmd="fs" title="Full screen (F)">⛶</button>
+    <button class="btn sm" data-cmd="help">?</button>
+    <button class="btn sm" data-cmd="setup" id="dSetup" title="Setup (E)">Setup</button>
+  </div>
+  <canvas id="fx"></canvas>
+</div>
+
+<div class="toasts" id="toasts"></div>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
