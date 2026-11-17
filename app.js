@@ -269,9 +269,9 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   const chip=$('sChip'); chip.className='s-chip '+(dy.chip.cls||''); $('sChipT').textContent=dy.chip.text;
   const wl=$('sWinList'), wt=$('sWinTop'); const wins=dy.wins.slice().reverse();
   const sig=wins.map(w=>w.cn).join(',');
-  if(wl.dataset.sig!==sig){ wl.dataset.sig=sig; wl.replaceChildren(); wt.replaceChildren();
+  if(wl.dataset.sig!==sig){ wl.dataset.sig=sig; wl.replaceChildren(); wl.scrollTop=0; wt.replaceChildren();
    if(!wins.length){ const e=document.createElement('div'); e.className='empty'; e.textContent='Prize winners will appear here'; wl.appendChild(e); }
-   wins.slice(0,14).forEach(w=>{ const li=document.createElement('li'); li.innerHTML='<div class="c"></div><div class="n" dir="auto"></div><div class="p"></div>'; li.querySelector('.c').textContent='Call #'+w.cn; li.querySelector('.n').textContent=w.n; li.querySelector('.p').textContent=w.prize; wl.appendChild(li); });
+   wins.forEach(w=>{ const li=document.createElement('li'); li.innerHTML='<div class="c"></div><div class="n" dir="auto"></div><div class="p"></div>'; li.querySelector('.c').textContent='Call #'+w.cn; li.querySelector('.n').textContent=w.n; li.querySelector('.p').textContent=w.prize; wl.appendChild(li); });
    wins.slice(0,10).forEach(w=>{ const c=document.createElement('div'); c.className='wchip'; c.innerHTML='<b></b><span dir="auto"></span><span></span>'; c.children[0].textContent='#'+w.cn; c.children[1].textContent=w.n; c.children[1].style.color='var(--text)'; c.children[2].textContent=w.prize; wt.appendChild(c); }); }
   const gb=$('sGrandBox'), dl=dy.deal||{}; gb.innerHTML='<div class="k">Grand prize</div><div class="t"></div><div class="f"></div>'; gb.querySelector('.t').textContent=dy.grandPrize||D.grandPrize||'Grand Prize';
   gb.querySelector('.f').textContent=dy.grandWon?('Won by '+dy.grandWon):(dl.decision==='deal'?(dl.name+' taken · runners-up get '+dl.runner+' each'):(dl.decision==='continue'?'Playing for it all':(dl.on?('or the '+dl.name+': '+dl.winner+' + '+dl.ru+' × '+dl.runner):(dy.finN>=2?('Final '+dy.finN):'Last ticket standing'))));

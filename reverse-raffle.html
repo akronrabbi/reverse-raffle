@@ -287,7 +287,9 @@ body[data-theme="royal"] .s-spot{background:radial-gradient(circle at var(--sx,5
 .s-spot.on{opacity:1}
 .s-side{width:auto;flex:1;min-height:0;padding:1.6vh 1.2vw;display:flex;flex-direction:column;gap:1vh;overflow:hidden}
 .s-side h3{margin:0;font-size:1.6vh;letter-spacing:.22em;text-transform:uppercase;color:var(--muted)}
-.s-side ol{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.8vh;flex:1;overflow:hidden;mask-image:linear-gradient(180deg,#000 80%,transparent)}
+.s-side ol{list-style:none;margin:0;padding:0 .4vw 0 0;display:flex;flex-direction:column;gap:.8vh;flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--accent) 55%,transparent) transparent}
+.s-side ol::-webkit-scrollbar{width:.6vw;max-width:8px}.s-side ol::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--accent) 55%,transparent);border-radius:99px}.s-side ol::-webkit-scrollbar-track{background:transparent}
+.s-side li{flex-shrink:0}
 .s-side li{padding:1vh .9vw;border-radius:1.4vh;background:var(--panel);border:1px solid var(--line);animation:chipIn .6s var(--ease)}
 .s-side li .c{font-size:1.35vh;color:var(--accent);font-weight:800;letter-spacing:.12em;text-transform:uppercase}
 .s-side li .n{font-size:2.2vh;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1108,9 +1110,9 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   const chip=$('sChip'); chip.className='s-chip '+(dy.chip.cls||''); $('sChipT').textContent=dy.chip.text;
   const wl=$('sWinList'), wt=$('sWinTop'); const wins=dy.wins.slice().reverse();
   const sig=wins.map(w=>w.cn).join(',');
-  if(wl.dataset.sig!==sig){ wl.dataset.sig=sig; wl.replaceChildren(); wt.replaceChildren();
+  if(wl.dataset.sig!==sig){ wl.dataset.sig=sig; wl.replaceChildren(); wl.scrollTop=0; wt.replaceChildren();
    if(!wins.length){ const e=document.createElement('div'); e.className='empty'; e.textContent='Prize winners will appear here'; wl.appendChild(e); }
-   wins.slice(0,14).forEach(w=>{ const li=document.createElement('li'); li.innerHTML='<div class="c"></div><div class="n" dir="auto"></div><div class="p"></div>'; li.querySelector('.c').textContent='Call #'+w.cn; li.querySelector('.n').textContent=w.n; li.querySelector('.p').textContent=w.prize; wl.appendChild(li); });
+   wins.forEach(w=>{ const li=document.createElement('li'); li.innerHTML='<div class="c"></div><div class="n" dir="auto"></div><div class="p"></div>'; li.querySelector('.c').textContent='Call #'+w.cn; li.querySelector('.n').textContent=w.n; li.querySelector('.p').textContent=w.prize; wl.appendChild(li); });
    wins.slice(0,10).forEach(w=>{ const c=document.createElement('div'); c.className='wchip'; c.innerHTML='<b></b><span dir="auto"></span><span></span>'; c.children[0].textContent='#'+w.cn; c.children[1].textContent=w.n; c.children[1].style.color='var(--text)'; c.children[2].textContent=w.prize; wt.appendChild(c); }); }
   const gb=$('sGrandBox'), dl=dy.deal||{}; gb.innerHTML='<div class="k">Grand prize</div><div class="t"></div><div class="f"></div>'; gb.querySelector('.t').textContent=dy.grandPrize||D.grandPrize||'Grand Prize';
   gb.querySelector('.f').textContent=dy.grandWon?('Won by '+dy.grandWon):(dl.decision==='deal'?(dl.name+' taken · runners-up get '+dl.runner+' each'):(dl.decision==='continue'?'Playing for it all':(dl.on?('or the '+dl.name+': '+dl.winner+' + '+dl.ru+' × '+dl.runner):(dy.finN>=2?('Final '+dy.finN):'Last ticket standing'))));
