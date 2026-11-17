@@ -869,7 +869,7 @@ document.addEventListener('keydown',e=>{
   if(IS_DISPLAY){ if(c==='setup') return; post({t:'cmd',c}); } else runCmd(c);
 });
 // show: auto-hide drawer + cursor
-(function(){ let t=0; const sh=$('show'), dr=$('sDrawer'); const wake=()=>{ dr.classList.add('on'); sh.classList.remove('nocursor'); clearTimeout(t); t=setTimeout(()=>{ if(!dr.matches(':hover')){ dr.classList.remove('on'); sh.classList.add('nocursor'); } },2600); }; sh.addEventListener('mousemove',wake); sh.addEventListener('mousedown',wake); sh.addEventListener('dblclick',e=>{ if(!e.target.closest('.s-drawer,.btn')) toggleFS(); }); })();
+(function(){ let t=0; const sh=$('show'), dr=$('sDrawer'); const wake=(e)=>{ if(e&&e.target&&e.target.closest&&e.target.closest('#sRight,.s-sponsor')){ sh.classList.remove('nocursor'); return; } dr.classList.add('on'); sh.classList.remove('nocursor'); clearTimeout(t); t=setTimeout(()=>{ if(!dr.matches(':hover')){ dr.classList.remove('on'); sh.classList.add('nocursor'); } },2600); }; sh.addEventListener('mousemove',wake); sh.addEventListener('mousedown',wake); sh.addEventListener('dblclick',e=>{ if(!e.target.closest('.s-drawer,.btn')) toggleFS(); }); })();
 addEventListener('resize',()=>{ R.relayout(); });
 
 
