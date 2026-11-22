@@ -57,7 +57,8 @@ const DEF={
 };
 function loadJSON(k){ try{ const v=localStorage.getItem(k); return v?JSON.parse(v):null; }catch(e){ return null; } }
 let storageWarned=false;
-function saveJSON(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e){ if(!storageWarned){ storageWarned=true; toast('Browser storage is full — try a smaller image','warn'); } return false; } }
+function isQuota(e){ if(!e) return false; const n=String(e.name||''); if(n==='QuotaExceededError'||n==='NS_ERROR_DOM_QUOTA_REACHED') return true; const c=+e.code; return c===22||c===1014; }
+function saveJSON(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e){ if(!storageWarned){ storageWarned=true; toast(isQuota(e)?'Browser storage is full — try a smaller image':('Could not save in this browser: '+(e&&e.message||'unknown error')),'warn'); } return false; } }
 let S=Object.assign(JSON.parse(JSON.stringify(DEF)), loadJSON(K_SET)||{});
 if(!Array.isArray(S.lists)||!S.lists.length) S.lists=JSON.parse(JSON.stringify(DEF.lists));
 if(!S.lists.find(l=>l.id===S.listId)) S.listId=S.lists[0].id;
@@ -69,7 +70,8 @@ const A={};
 let _st=0;
 function saveSettings(){ if(IS_DISPLAY) return; clearTimeout(_st); _st=setTimeout(()=>saveJSON(K_SET,S),120); }
 function saveGame(){ if(IS_DISPLAY) return; if(G) saveJSON(K_GAME,G); else { try{ localStorage.removeItem(K_GAME);}catch(e){} } }
-addEventListener('beforeunload',()=>{ if(!IS_DISPLAY){ clearTimeout(_st); saveJSON(K_SET,S); saveGame(); } });
+let wiping=false;
+addEventListener('beforeunload',()=>{ if(wiping||IS_DISPLAY) return; clearTimeout(_st); saveJSON(K_SET,S); saveGame(); });
 
 /* ---------- tickets ---------- */
 function parseNameLines(text){
@@ -126,7 +128,24 @@ const Snd={ctx:null,master:null,nb:null,
 /* ---------- text to speech ---------- */
 const TTS={voices:[],
  init(){ if(IS_DISPLAY||!('speechSynthesis' in window)) return; const load=()=>{ this.voices=speechSynthesis.getVoices()||[]; fillVoices(); }; load(); speechSynthesis.onvoiceschanged=load; },
- say(text, force){ if(IS_DISPLAY||!('speechSynthesis' in window)) return; if(!S.tts&&!force) return; try{ speechSynthesis.cancel(); const u=new SpeechSynthesisUtterance(text); const v=this.voices.find(v=>v.voiceURI===S.ttsVoice); if(v){u.voice=v;u.lang=v.lang;} u.rate=S.ttsRate||1; speechSynthesis.speak(u);}catch(e){} }
+ say(text, force){
+  return new Promise(resolve=>{
+    let settled=false; const finish=()=>{ if(settled) return; settled=true; resolve(); };
+    if(IS_DISPLAY||!text||!('speechSynthesis' in window)||(!S.tts&&!force)){ finish(); return; }
+    try{
+      const u=new SpeechSynthesisUtterance(text);
+      const v=this.voices.find(vv=>vv.voiceURI===S.ttsVoice); if(v){ u.voice=v; u.lang=v.lang; }
+      u.rate=S.ttsRate||1;
+      const words=String(text).trim().split(/\s+/).filter(Boolean).length||1;
+      const cap=Math.min(20000, Math.max(2800, (words/2.1)*1000/(u.rate||1)+1500));
+      const timer=setTimeout(finish, cap);
+      const end=()=>{ clearTimeout(timer); finish(); };
+      u.onend=end; u.onerror=end;
+      try{ if(speechSynthesis.speaking||speechSynthesis.pending) speechSynthesis.cancel(); }catch(e){}
+      setTimeout(()=>{ try{ if(speechSynthesis.paused) speechSynthesis.resume(); speechSynthesis.speak(u); }catch(e){ end(); } }, 30);
+    }catch(e){ finish(); }
+  });
+ }
 };
 /* ---------- confetti & fireworks ---------- */
 const FX={cv:null,cx:null,P:[],raf:0,W:0,H:0,dpr:1,until:0,fw:0,
@@ -276,10 +295,12 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   const gb=$('sGrandBox'), dl=dy.deal||{}; gb.innerHTML='<div class="k">Grand prize</div><div class="t"></div><div class="f"></div>'; gb.querySelector('.t').textContent=dy.grandPrize||D.grandPrize||'Grand Prize';
   gb.querySelector('.f').textContent=dy.grandWon?('Won by '+dy.grandWon):(dl.decision==='deal'?(dl.name+' taken · runners-up get '+dl.runner+' each'):(dl.decision==='continue'?'Playing for it all':(dl.on?('or the '+dl.name+': '+dl.winner+' + '+dl.ru+' × '+dl.runner):(dy.finN>=2?('Final '+dy.finN):'Last ticket standing'))));
   this.paint();
-  if(!this.animating && dy.lastCn!==this.stageCn) this.stageIdle();
+  if(dy.last&&dy.last.grand){ if(this.stageCn!==dy.lastCn) this.stageIdle(); }
+  else if(!this.animating && dy.lastCn!==this.stageCn) this.stageIdle();
   this.setOv(dy.ov);
   $('ovWel').classList.toggle('on',!!dy.welcome && !this.cdOn); this.welcomeText(dy);
   const dp=$('dPlay'); dp.textContent=dy.phase==='running'?'❚❚ Pause':(dy.phase==='ready'?'▶ Start':'▶ Continue');
+  dp.disabled=!!revealSeq; document.querySelectorAll('#show [data-cmd="next"]').forEach(b=>{ b.disabled=!!revealSeq||!!busy; });
   const sp=$('dSpeed'); if(document.activeElement!==sp) sp.value=dy.speed; $('dSpeedV').textContent=fmtS(dy.speed);
   $('dSound').style.opacity=dy.sound?1:0.45; $('dVoice').style.opacity=dy.tts?1:0.45;
  },
@@ -307,7 +328,7 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
  fitStage(){ const win=$('sStageWin'); win.querySelectorAll('.s-name').forEach(d=>{ if(d.dataset.t==null){ if(d.parentNode===win) d.style.fontSize=fitPx(d.textContent,win.clientWidth*0.9,Math.max(14,win.clientHeight*0.62),800)+'px'; return; } const t=+d.dataset.t; const tk=this.T[t]; if(tk) this.fitName(d,tk.n); }); },
  stageText(label,big,sub){ $('sStageLabel').textContent=label; const win=$('sStageWin'); win.classList.remove('reelmask'); const d=document.createElement('div'); d.className='s-name'; d.textContent=big; d.style.fontSize=fitPx(big,win.clientWidth*0.9,Math.max(14,win.clientHeight*0.62),800)+'px'; win.replaceChildren(d); const s=$('sStageSub'); s.className='s-stage-sub'; s.textContent=sub||''; },
  stageIdle(){ const dy=this.dy; if(!dy) return; this.stageCn=dy.lastCn; $('sStage').classList.remove('prize');
-  if(dy.last){ const L=dy.last; $('sStageLabel').textContent=(L.prize?'🏆 Call #':'Call #')+L.cn; const win=$('sStageWin'); win.classList.remove('reelmask'); win.replaceChildren(this.nameEl(L.t)); const s=$('sStageSub'); s.className='s-stage-sub'+(L.prize?' win':''); s.textContent=L.prize?('Wins '+L.prize):'is out'; if(L.prize) $('sStage').classList.add('prize'); }
+  if(dy.last){ const L=dy.last; $('sStageLabel').textContent=L.grand?(L.kick||'Grand prize'):((L.prize?'🏆 Call #':'Call #')+L.cn); const win=$('sStageWin'); win.classList.remove('reelmask'); win.replaceChildren(this.nameEl(L.t)); const s=$('sStageSub'); s.className='s-stage-sub'+((L.prize||L.grand)?' win':''); s.textContent=L.prize?('Wins '+L.prize):(L.grand?'Winner':'is out'); if(L.prize||L.grand) $('sStage').classList.add('prize'); }
   else this.stageText((this.D&&this.D.title)?'Reverse raffle':'Get ready','Get ready!', dy.total+' tickets · last ticket standing wins');
  },
  anim(p){
@@ -318,10 +339,19 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   const D=this.D||{}; const a=(D.bigBoard||p.dur<0.3)?'quick':p.anim;
   st.classList.remove('spinning'); if(D.animation!=='slot') st.classList.toggle('slot',a==='slot');
   const done=()=>tok===this.tok;
-  this['a_'+a] ? this['a_'+a](p,done) : this.a_quick(p,done);
+  this._animP=new Promise(resolve=>{
+    let settled=false; const finish=()=>{ if(settled) return; settled=true; resolve(); };
+    this._finishAnim=finish; setTimeout(finish, Math.max(800,(+p.dur||0)*1000+1800));
+  });
+  try{ (this['a_'+a]?this['a_'+a]:this.a_quick).call(this,p,done); }
+  catch(e){ this._finishAnim&&this._finishAnim(); }
  },
- a_quick(p,done){ const win=$('sStageWin'); win.classList.remove('reelmask'); const d=this.nameEl(p.t); win.replaceChildren(d); d.animate([{opacity:0,transform:'scale(.85)'},{opacity:1,transform:'none'}],{duration:Math.max(80,p.dur*900),easing:'ease-out'});
-  const c=this.cells[p.t]; if(c){ c.classList.add('lit'); setTimeout(()=>c.classList.remove('lit'),Math.max(80,p.dur*900)); } },
+ a_quick(p,done){ const win=$('sStageWin'); win.classList.remove('reelmask'); const d=this.nameEl(p.t); win.replaceChildren(d);
+  const dur=Math.max(80,p.dur*900);
+  const an=d.animate([{opacity:0,transform:'scale(.85)'},{opacity:1,transform:'none'}],{duration:dur,easing:'ease-out'});
+  const landed=()=>{ if(done()&&this._finishAnim) this._finishAnim(); };
+  if(an&&an.finished&&typeof an.finished.then==='function') an.finished.then(landed,landed); else setTimeout(landed,dur);
+  const c=this.cells[p.t]; if(c){ c.classList.add('lit'); setTimeout(()=>c.classList.remove('lit'),dur); } },
  pullLever(ms){ const arm=$('sLeverArm'), kn=$('sLeverKnob'); if(!arm||!arm.animate) return; const d=clamp(ms*0.5,320,900), L=arm.offsetHeight*2;
   const ein='cubic-bezier(.55,0,.85,.4)', eout='cubic-bezier(.25,1.5,.4,1)';
   arm.animate([{transform:'scaleY(1)',easing:ein},{transform:'scaleY(-1)',offset:.32},{transform:'scaleY(-1)',offset:.44,easing:eout},{transform:'scaleY(1)'}],{duration:d});
@@ -334,7 +364,7 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   win.replaceChildren(reel); const N=list.length-1, D=p.dur*1000, t0=performance.now();
   const step=()=>{ if(!done()) return; const q=Math.min(1,(performance.now()-t0)/D); const e=1-Math.pow(1-q,3.2); reel.style.transform='translate3d(0,'+(-e*N*H).toFixed(1)+'px,0)';
    const v=3.2*Math.pow(1-q,2.2)*N*H/D*16.7; reel.style.filter=v>6?'blur('+Math.min(7,v*0.06).toFixed(1)+'px)':'none'; // motion blur while the reel is fast
-   if(q<1) requestAnimationFrame(step); else { stg.classList.remove('spinning'); this.finishName(p,true); } };
+   if(q<1) requestAnimationFrame(step); else { stg.classList.remove('spinning'); this.finishName(p,true); if(done()&&this._finishAnim) this._finishAnim(); } };
   requestAnimationFrame(step);
  },
  cellCenter(t){ const c=this.cells[t]; if(!c) return null; const a=c.getBoundingClientRect(), b=$('sSpot').getBoundingClientRect(); return {x:a.left-b.left+a.width/2, y:a.top-b.top+a.height/2}; },
@@ -347,7 +377,7 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   const step=()=>{ if(!done()){ sp.classList.remove('on'); return; } const el=performance.now()-t0;
    while(seg<pts.length && el>=times[seg]){ if(lit) lit.classList.remove('lit'); lit=this.cells[pts[seg].t]; lit&&lit.classList.add('lit'); from=pts[seg].c; if(seg<pts.length-1) win.replaceChildren(this.nameEl(pts[seg].t,true)); seg++; }
    if(seg<pts.length){ const sT=seg?times[seg-1]:0, eT=times[seg]; let q=(el-sT)/Math.max(1,eT-sT); q=q<.5?4*q*q*q:1-Math.pow(-2*q+2,3)/2; const to=pts[seg].c; const prevC=seg?pts[seg-1].c:{x:w.clientWidth/2,y:w.clientHeight/2}; sp.style.setProperty('--sx',(prevC.x+(to.x-prevC.x)*q)+'px'); sp.style.setProperty('--sy',(prevC.y+(to.y-prevC.y)*q)+'px'); requestAnimationFrame(step); }
-   else { sp.style.setProperty('--sx',from.x+'px'); sp.style.setProperty('--sy',from.y+'px'); this.finishName(p); setTimeout(()=>{ if(lit) lit.classList.remove('lit'); sp.classList.remove('on'); }, Math.max(150,p.dur*1000-el)); }
+   else { sp.style.setProperty('--sx',from.x+'px'); sp.style.setProperty('--sy',from.y+'px'); this.finishName(p); if(done()&&this._finishAnim) this._finishAnim(); setTimeout(()=>{ if(lit) lit.classList.remove('lit'); sp.classList.remove('on'); }, Math.max(150,p.dur*1000-el)); }
   };
   requestAnimationFrame(step);
  },
@@ -355,7 +385,7 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   const t0=performance.now(); let k=0, litEls=[]; const win=$('sStageWin'); win.classList.remove('reelmask'); win.replaceChildren(this.dotsEl());
   const step=()=>{ if(!done()){ litEls.forEach(e=>e.classList.remove('lit')); return; } const el=performance.now()-t0;
    while(k<p.groups.length && el>=p.hops[k]){ litEls.forEach(e=>e.classList.remove('lit')); litEls=p.groups[k].map(t=>this.cells[t]).filter(Boolean); litEls.forEach(e=>e.classList.add('lit')); if(k<p.groups.length-1) win.replaceChildren(this.nameEl(p.groups[k][0],true)); k++; }
-   if(k<p.groups.length) requestAnimationFrame(step); else { this.finishName(p); const keep=litEls; setTimeout(()=>keep.forEach(e=>e.classList.remove('lit')),Math.max(150,p.dur*1000-el)); }
+   if(k<p.groups.length) requestAnimationFrame(step); else { this.finishName(p); if(done()&&this._finishAnim) this._finishAnim(); const keep=litEls; setTimeout(()=>keep.forEach(e=>e.classList.remove('lit')),Math.max(150,p.dur*1000-el)); }
   };
   requestAnimationFrame(step);
  },
@@ -364,11 +394,16 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
   const fr=document.createElement('div'); fr.className='face front'; fr.textContent='#'+p.cn; fr.style.fontSize=(win.clientHeight*0.55)+'px';
   const bk=document.createElement('div'); bk.className='face back'; bk.appendChild(this.nameEl(p.t)); fl.appendChild(fr); fl.appendChild(bk); win.replaceChildren(fl);
   const D=p.dur*1000; fr.animate([{transform:'scale(1)'},{transform:'scale(1.06)'},{transform:'scale(1)'}],{duration:D*0.4,iterations:1});
-  fl.animate([{transform:'rotateX(0deg)'},{transform:'rotateX(180deg)'}],{duration:D*0.5,delay:D*0.38,easing:'cubic-bezier(.45,-0.25,.3,1.35)',fill:'forwards'});
+  const flAnim=fl.animate([{transform:'rotateX(0deg)'},{transform:'rotateX(180deg)'}],{duration:D*0.5,delay:D*0.38,easing:'cubic-bezier(.45,-0.25,.3,1.35)',fill:'forwards'});
+  const landed=()=>{ if(done()&&this._finishAnim) this._finishAnim(); };
+  if(flAnim&&flAnim.finished&&typeof flAnim.finished.then==='function') flAnim.finished.then(landed,landed); else setTimeout(landed,D*0.92);
  },
  a_zoom(p,done){
   const win=$('sStageWin'); win.classList.remove('reelmask'); win.replaceChildren(this.dotsEl()); const D=p.dur*1000;
-  setTimeout(()=>{ if(!done()) return; const d=this.nameEl(p.t); win.replaceChildren(d); d.animate([{transform:'scale(3)',opacity:0,filter:'blur(18px)'},{transform:'scale(1)',opacity:1,filter:'blur(0)'}],{duration:D*0.5,easing:'cubic-bezier(.2,.9,.25,1)'});
+  setTimeout(()=>{ if(!done()) return; const d=this.nameEl(p.t); win.replaceChildren(d);
+   const an=d.animate([{transform:'scale(3)',opacity:0,filter:'blur(18px)'},{transform:'scale(1)',opacity:1,filter:'blur(0)'}],{duration:D*0.5,easing:'cubic-bezier(.2,.9,.25,1)'});
+   const landed=()=>{ if(done()&&this._finishAnim) this._finishAnim(); };
+   if(an&&an.finished&&typeof an.finished.then==='function') an.finished.then(landed,landed); else setTimeout(landed,D*0.5);
    const ring=document.createElement('div'); ring.className='ring'; $('sStage').appendChild(ring); ring.animate([{transform:'scale(.3)',opacity:.9},{transform:'scale(2.2)',opacity:0}],{duration:900,delay:D*0.42,easing:'ease-out'}).onfinish=()=>ring.remove(); },D*0.32);
  },
  dotsEl(){ const d=document.createElement('div'); d.className='dots'; d.innerHTML='<i></i><i></i><i></i>'; return d; },
@@ -410,7 +445,7 @@ const R={D:null,T:[],O:[],A:{},dy:null,cells:[],tok:0,animating:false,stageCn:-1
 function fmtS(v){ v=+v; return (v<10?v.toFixed(1):Math.round(v))+'s'; }
 
 /* ===================== ENGINE (control window) ===================== */
-let timer=0, winTimer=0, welTimer=0, busy=false, gen=0, lastCallStart=0, view='setup';
+ let timer=0, winTimer=0, welTimer=0, busy=false, revealSeq=false, gen=0, lastCallStart=0, view='setup';
 const displays=new Map();
 function labelFull(t){ const tk=G.tickets[t]; if(!tk) return '?'; return tk.num?tk.n:(tk.n+' (#'+tk.no+')'); }
 function log(type,text){ if(!G) return; G.audit.push({at:Date.now(),type,text}); }
@@ -458,7 +493,8 @@ function buildDyn(){
   else if(ph==='finalists'){ ov={k:'final',key:'f'+G.id+G.finAt,N:(G.finList||[]).length,names:(G.finList||[]).filter(t=>G.st[t]===-1).map(t=>({n:T[t].n,no:(S.showNumbers&&!T[t].num)?T[t].no:''})),prompt:S.splitPrompt||'Take the deal, or play for it all?',split:!!S.splitOn,dealName:di.name,ru:di.ru,runner:di.runner,winner:di.winner,full:di.full}; }
   else if(ph==='done'&&G.grand!=null&&G.finalView===0){ const dealt=G.decision==='deal'&&G.deal; const ru=runnersUp(); ov={k:'grand',key:'g'+G.id+G.grand,n:T[G.grand].n,prize:grandPrizeNow(),kick:dealt?('Last one standing · '+gameDealName()):'',sub:dealt?((ru.length?('Runners-up: '+ru.join(' & ')+' — '+G.deal.runner+' each · '):'')+'last ticket standing out of '+T.length):('Last ticket standing out of '+T.length)}; }
   else if(ph==='split'&&G.finalView===0){ const names=(G.finList||[]).filter(t=>G.st[t]===-1).map(t=>T[t].n); ov={k:'split',key:'s'+G.id+G.finAt,n:names.join('  ·  '),prize:S.grandPrize||'Grand Prize',sub:'Congratulations to our '+names.length+' finalists!'}; }
-  const last=G.calls.length?(()=>{ const k=G.calls.length-1, c=G.calls[k]; return (G.pending===c.t)?(k>0?{cn:k,t:G.calls[k-1].t,prize:G.calls[k-1].p}:null):{cn:k+1,t:c.t,prize:c.p}; })():null;
+  let last=G.calls.length?(()=>{ const k=G.calls.length-1, c=G.calls[k]; return (G.pending===c.t)?(k>0?{cn:k,t:G.calls[k-1].t,prize:G.calls[k-1].p}:null):{cn:k+1,t:c.t,prize:c.p}; })():null;
+  if(G.grand!=null&&G.pending==null){ const dealt=G.decision==='deal'&&!!G.deal; last={cn:G.calls.length+1,t:G.grand,prize:grandPrizeNow(),grand:true,kick:dealt?'Last one standing':'Grand prize'}; }
   const finSet = (G.finAt!=null)?(G.finList||[]):[];
   return {phase:ph,called:G.calls.length-(G.pending!=null?1:0),rem:rem+(G.pending!=null?1:0),total:T.length,st:G.st,pending:G.pending,wmap,wins,fin:finSet,grand:G.grand,
    grandWon:G.grand!=null?T[G.grand].n:(ph==='split'?'the finalists (split)':null),finN:finN(),next:nextPrize(),ov,chip:chipFor(),last,lastCn:last?last.cn:0,
@@ -487,13 +523,20 @@ function makePlan(t,cn,prize,rem){
   plan.ticks=ticks; return plan;
 }
 async function countdown(n){ for(let k=n;k>=1;k--){ send('cd',{n:k}); Snd.beep(false); await sleep(1000); } send('cd',{n:0}); Snd.beep(true); await sleep(650); send('cd',{n:-1}); }
-async function doCall(){
-  if(!G||busy) return; if(!['running','paused','ready'].includes(G.phase)) return;
-  let rem=remIdx(); if(rem.length<=1){ continueFlow(null); return; }
-  busy=true; clearTimeout(timer); G.welManual=null; const my=gen; const t0=performance.now(); lastCallStart=t0;
+function inFinale(remLeft){ const n=remLeft==null?remaining():remLeft; return n<=3 && n>=2 && !offerFinal(); }
+function syncLock(){
+  document.querySelectorAll('[data-cmd="next"]').forEach(b=>{ b.disabled=!!revealSeq||!!busy; });
+  const dp=$('dPlay'); if(dp) dp.disabled=!!revealSeq;
+  const pb=$('lbPlay'); if(pb) pb.disabled=!!revealSeq || !!(G&&['done','split','finalists'].includes(G.phase));
+}
+function dwellFor(plan){ const after=Math.max(0, effSpeed()*1000-plan.dur*1000); return Math.round(Math.max(1100, Math.min(4000, after))); }
+async function waitAnim(plan){ const p=(view==='show'&&R._animP)?R._animP:null; if(p) return p; await sleep(Math.max(60, plan.dur*1000)); }
+async function performCall(my, chain){
+  let rem=remIdx(); if(rem.length<=1) return {kind:'nomore'};
+  G.welManual=null; const t0=performance.now(); lastCallStart=t0;
   const cn=G.calls.length+1; const pz=prizeAt(cn); let ptxt=pz?prizeText(pz):null;
-  const dealNow=G.decision==='deal'&&!!G.deal; // Final Three Deal taken: every finalist called out is a paid runner-up
-  if((ptxt||dealNow)&&S.cdPrize&&(+S.countdown>0)){ await countdown(+S.countdown); if(my!==gen||!G){ busy=false; return; } rem=remIdx(); }
+  const dealNow=G.decision==='deal'&&!!G.deal;
+  if((ptxt||dealNow)&&S.cdPrize&&(+S.countdown>0)){ await countdown(+S.countdown); if(my!==gen||!G) return {kind:'abort'}; rem=remIdx(); if(rem.length<=1) return {kind:'nomore'}; }
   const t=rem[randInt(rem.length)];
   const ru=dealNow&&(G.finList||[]).includes(t); if(ru) ptxt=ptxt?(ptxt+' + '+G.deal.runner):G.deal.runner;
   G.calls.push(ru?{t,p:ptxt,at:Date.now(),ru:true}:{t,p:ptxt,at:Date.now()}); G.st[t]=G.calls.length-1; G.ops.push({k:'call'}); G.pending=t;
@@ -503,16 +546,50 @@ async function doCall(){
   send('anim',{plan}); push();
   if(plan.anim==='slot') Snd.clunk();
   if(plan.anim!=='quick'){ if(ptxt&&S.suspense&&plan.dur>=1) Snd.drumroll(plan.dur); else if(effSpeed()>=0.8) Snd.ticksAt(plan.ticks); }
-  await sleep(plan.dur*1000);
-  if(my!==gen||!G){ busy=false; return; }
+  if(chain) await waitAnim(plan); else await sleep(plan.dur*1000);
+  if(my!==gen||!G) return {kind:'abort'};
   G.pending=null; saveGame();
   const tk=G.tickets[t];
   send('reveal',{t,cn,prize:ptxt});
-  if(!ptxt){ if(effSpeed()>=0.6) Snd.out(); if(!S.ttsOnlyWinners) TTS.say(tk.n+' is out'); }
-  else if(ru) TTS.say(tk.n+' is out, and wins '+ptxt+' as a runner-up!');
-  else TTS.say(tk.n+'. Wins '+ptxt+'!');
-  busy=false;
-  afterReveal(G.calls.length-1,false,t0);
+  const line=!ptxt?(tk.n+' is out'):(ru?(tk.n+' is out, and wins '+ptxt+' as a runner-up!'):(tk.n+'. Wins '+ptxt+'!'));
+  if(!ptxt&&effSpeed()>=0.6) Snd.out();
+  let speech=Promise.resolve();
+  if(!ptxt){ if(!S.ttsOnlyWinners) speech=TTS.say(line); }
+  else speech=TTS.say(line);
+  if(chain){ const hold=sleep(dwellFor(plan)); await speech; await hold; if(my!==gen||!G) return {kind:'abort'}; }
+  return {kind:'called', idx:G.calls.length-1, ptxt:ptxt, t0};
+}
+async function grandBuildUp(my){
+  if(!G||G.grand!=null) return;
+  if(remIdx().length!==1) return;
+  Snd.drumroll(1.7);
+  await sleep(1700);
+  if(my!==gen||!G||G.grand!=null) return;
+  if(remIdx().length!==1) return;
+  await declareGrand();
+}
+async function doCall(){
+  if(!G||busy) return; if(!['running','paused','ready'].includes(G.phase)) return;
+  let rem=remIdx(); if(rem.length<=1){ continueFlow(null); return; }
+  busy=true; clearTimeout(timer); const my=gen; const chain=inFinale(rem.length); if(chain) revealSeq=true; syncLock();
+  try{
+    for(;;){
+      if(my!==gen||!G) break;
+      const res=await performCall(my, chain);
+      if(!res||res.kind==='abort'||my!==gen||!G) break;
+      if(res.kind==='nomore'){ if(chain) await grandBuildUp(my); else continueFlow(null); break; }
+      if(res.ptxt){ afterReveal(res.idx,false,res.t0); break; }
+      G.handled=res.idx+1; saveGame(); push();
+      if(!chain){ continueFlow(res.t0); break; }
+      const left=remaining();
+      if(left<=1){ await grandBuildUp(my); break; }
+      if(offerFinal()){ continueFlow(null); break; }
+      if(!['running','paused','ready'].includes(G.phase)) break;
+    }
+  } finally {
+    if(my===gen){ busy=false; revealSeq=false; }
+    syncLock();
+  }
 }
 function afterReveal(idx,restored,t0){
   G.handled=idx+1; const c=G.calls[idx];
@@ -530,9 +607,9 @@ function continueFlow(t0){
   return false;
 }
 function dismissWinner(viaKey){ clearTimeout(winTimer); if(!G||G.phase!=='winner') return; const resume=viaKey||G.resumeAfter; G.phase=resume?'running':'paused'; if(!resume) G.pausedAt=Date.now(); log('continue','Winner screen closed'+(resume?', draw continues':'')); saveGame(); push(); continueFlow(null); }
-function declareGrand(){ const r=remIdx(); if(r.length!==1) return; G.grand=r[0]; G.finalView=0; const dealt=G.decision==='deal'&&G.deal;
+function declareGrand(){ const r=remIdx(); if(r.length!==1||!G||G.grand!=null) return Promise.resolve(); G.grand=r[0]; G.finalView=0; const dealt=G.decision==='deal'&&G.deal;
   log('grand',(dealt?'LAST ONE STANDING ('+gameDealName()+'): ':'GRAND PRIZE: ')+labelFull(G.grand)+' wins '+grandPrizeNow()); setPhase('done'); send('fx',{kind:'grand'}); Snd.fanfare(true);
-  setTimeout(()=>TTS.say(dealt?('And the last one standing is… '+G.tickets[G.grand].n+'! Winning '+grandPrizeNow()+'!'):('And the grand prize winner is… '+G.tickets[G.grand].n+'!'),true),400); }
+  return TTS.say(dealt?('And the last one standing is… '+G.tickets[G.grand].n+'! Winning '+grandPrizeNow()+'!'):('And the grand prize winner is… '+G.tickets[G.grand].n+'!'),true); }
 // Final Three Deal: "deal" = the N-1 runners-up each get the runner-up amount and the game plays on to the last one standing (deal winner amount); "continue" = play for it all (grand prize)
 function decide(kind){ if(!G||G.phase!=='finalists') return;
   if(kind==='deal'||kind==='split'){ if(!S.splitOn) return; const di=dealInfo((G.finList||[]).length); G.decision='deal'; G.deal={runner:di.runner,winner:di.winner,ru:di.ru}; G.ops.push({k:'deal'});
@@ -551,7 +628,7 @@ async function play(){
   G.cdDone=true; scheduleNext(first?250:450);
 }
 function pause(){ if(!G||G.phase!=='running') return; clearTimeout(timer); log('pause','Draw paused'); setPhase('paused'); }
-function cmdToggle(){ if(!G){ return; } Snd.init();
+function cmdToggle(){ if(!G||revealSeq){ return; } Snd.init();
   switch(G.phase){ case 'winner': dismissWinner(true); break; case 'finalists': toast(S.splitOn?'Choose “Take the deal” (D) or “Play for it all” (P)':'Press Continue (C) on the finalists screen'); break;
    case 'done': case 'split': G.finalView=(G.finalView+1)%(S.welAfter?3:2); saveGame(); push(); break;
    case 'running': pause(); break; default: play(); } }
@@ -572,13 +649,13 @@ function undo(){
 function canEditEntries(){ if(!G) return 'Start a game first'; if(busy) return 'Wait for the current call to finish'; if(G.phase==='running'){ pause(); } if(!['paused','ready'].includes(G.phase)) return 'Close the winner / finalists screen first (or undo)'; return ''; }
 function rebuy(t){ const why=canEditEntries(); if(why) return toast(why,'warn'); const prev=G.st[t]; if(prev===-1) return; G.st[t]=-1; G.ops.push({k:'rebuy',t,prev}); G.rebuys.push({at:Date.now(),t,kind:prev===-2?'restore':'rebuy',afterCall:G.calls.length,was:prev}); log('rebuy',(prev===-2?'Restored: ':'Re-buy: ')+labelFull(t)+' is back in'+(prev>=0?' (was out at call #'+(prev+1)+')':'')); saveGame(); push(); Snd.back(); renderRebuy(); }
 function removeT(t){ const why=canEditEntries(); if(why) return toast(why,'warn'); if(G.st[t]!==-1) return; if(remaining()<=2) return toast('At least 2 tickets must stay in','warn'); G.st[t]=-2; G.ops.push({k:'remove',t,prev:-1}); G.rebuys.push({at:Date.now(),t,kind:'remove',afterCall:G.calls.length}); log('remove','Removed by hand: '+labelFull(t)); saveGame(); push(); renderRebuy(); }
-function resetGame(){ gen++; stopTimers(); busy=false; G=null; saveGame(); send('fx',{kind:'stop'}); send('cd',{n:-1}); if(view==='show') goSetup(); sendFull(); updLive(); renderNamesLock(); toast('Game reset'); }
+function resetGame(){ gen++; stopTimers(); busy=false; revealSeq=false; G=null; saveGame(); send('fx',{kind:'stop'}); send('cd',{n:-1}); if(view==='show') goSetup(); sendFull(); updLive(); renderNamesLock(); toast('Game reset'); }
 // restart the current draw from the beginning with the same tickets, prizes and settings
 async function askRestart(confirmed){ if(!G){ toast('No game yet — press “Open show screen” to start one'); return; }
   if(!confirmed&&G.calls.length){ const done=['done','split'].includes(G.phase);
     if(!(await ask('Restart the game?','Starts the draw over from call #1 with the same tickets, prizes and settings. The '+G.calls.length+' call'+(G.calls.length===1?'':'s')+(done?' and results':', winners and audit log')+' of this draw will be cleared.',{ok:'↻ Restart game',danger:true}))) return; }
   restartGame(); }
-function restartGame(){ const prevCalls=G?G.calls.length:0; gen++; stopTimers(); clearTimeout(welTimer); busy=false; try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(e){}
+function restartGame(){ const prevCalls=G?G.calls.length:0; gen++; stopTimers(); clearTimeout(welTimer); busy=false; revealSeq=false; try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(e){}
   G=null; const ok=newGame(); if(ok) log('restart','Game restarted with the same settings'+(prevCalls?' (previous draw had '+prevCalls+' calls)':''));
   saveGame(); send('fx',{kind:'stop'}); send('cd',{n:-1}); sendFull(); updLive(); renderNamesLock(); closeModal();
   if(ok) toast('Game restarted — same tickets, prizes and settings'); }
@@ -615,7 +692,7 @@ let modalOpen=null;
 function modal(html,opts){ closeModal(); const m=document.createElement('div'); m.className='modal'; m.innerHTML='<div class="box'+(opts&&opts.big?' big':'')+'">'+html+'</div>'; document.body.appendChild(m); modalOpen=m; m.addEventListener('mousedown',e=>{ if(e.target===m&&!(opts&&opts.sticky)) closeModal(); }); return m; }
 function closeModal(){ if(modalOpen){ modalOpen.remove(); modalOpen=null; } }
 function ask(title,text,o){ o=o||{}; return new Promise(res=>{ const m=modal('<h3></h3><p></p>'+(o.input!=null?'<input type="text" class="ain" style="width:100%">':'')+'<div class="acts"><button class="btn ghost" data-a="0">Cancel</button><button class="btn '+(o.danger?'danger':'primary')+'" data-a="1"></button></div>');
-  m.querySelector('h3').textContent=title; m.querySelector('p').textContent=text||''; m.querySelector('[data-a="1"]').textContent=o.ok||'OK';
+  m.querySelector('h3').textContent=title; m.querySelector('p').textContent=text||''; const okb=m.querySelector('[data-a="1"]'); okb.textContent=o.ok||'OK'; if(o.danger) okb.className='btn danger fill';
   const inp=m.querySelector('.ain'); if(inp){ inp.value=o.input; setTimeout(()=>{inp.focus();inp.select();},30); }
   else setTimeout(()=>m.querySelector('[data-a="1"]').focus(),30);
   const fin=v=>{ closeModal(); res(v); };
@@ -738,7 +815,7 @@ function bindForm(){
   // game buttons
   $('btnOpenShow').onclick=openShowHere; $('btnOpenShow2').onclick=openShowHere; $('btnPopout').onclick=openPopout;
   $('btnExport').onclick=exportResults; $('btnExportAudit').onclick=exportAudit;
-  $('btnReset').onclick=resetAsk;
+  $('btnReset').onclick=resetAsk; if($('btnFactory')) $('btnFactory').onclick=factoryReset;
   document.querySelectorAll('[data-cmd]').forEach(b=>b.addEventListener('click',e=>{ e.stopPropagation(); const c=b.dataset.cmd; if(IS_DISPLAY&&c==='restart'){ if(confirm('Restart the game from the beginning with the same tickets, prizes and settings?')) post({t:'cmd',c,arg:'yes'}); } else if(IS_DISPLAY&&!['fs','help'].includes(c)) post({t:'cmd',c}); else if(c==='fs') toggleFS(); else if(c==='help') $('sHelp').classList.toggle('hidden'); else runCmd(c); }));
   $('dSpeed').addEventListener('input',e=>{ if(IS_DISPLAY) post({t:'cmd',c:'speed',arg:+e.target.value}); else setSpeed(+e.target.value,true); $('dSpeedV').textContent=fmtS(+e.target.value); });
 }
@@ -774,7 +851,7 @@ function updPrizeMsgs(){ const ps=curList().prizes; [...$('prizeRows').querySele
 function renderPrizeSummary(){ const el=$('prizeSummary'); if(!el) return; const ps=curList().prizes.filter(p=>parseInt(p.call,10)>0); const total=ticketTotal(), N=finN(); const lastc=ps.reduce((m,p)=>Math.max(m,parseInt(p.call,10)),0);
   el.textContent=ps.length+' prize'+(ps.length===1?'':'s')+(lastc?' · last at call #'+lastc:'')+(total>1&&N>=2&&N<total?' · final '+N+' reached at call #'+(total-N):''); }
 function renderThumbs(){ [['thLogo','logo'],['thBg','bg'],['thWelcome','welcome'],['thSponsor','sponsor']].forEach(([id,k])=>{ const el=$(id); if(el) el.style.backgroundImage=A[k]?'url("'+A[k]+'")':'none'; }); }
-function loadImage(file,max,key){ const rd=new FileReader(); rd.onload=()=>{ const img=new Image(); img.onload=()=>{ const sc=Math.min(1,max/Math.max(img.width,img.height)); const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(img.width*sc)); c.height=Math.max(1,Math.round(img.height*sc)); c.getContext('2d').drawImage(img,0,0,c.width,c.height); let url=key==='bg'?c.toDataURL('image/jpeg',0.84):c.toDataURL('image/png'); if(url.length>1800000) url=c.toDataURL('image/jpeg',0.82); A[key]=url; try{ localStorage.setItem(K_ASSET+key,url); }catch(e){ toast('Image too large to save for refresh — it will work until you reload','warn'); } renderThumbs(); send('assets',{A}); send('disp',{D:dispSettings()}); toast('Image added'); }; img.onerror=()=>toast('Could not read that image','warn'); img.src=rd.result; }; rd.readAsDataURL(file); }
+function loadImage(file,max,key){ const rd=new FileReader(); rd.onload=()=>{ const img=new Image(); img.onload=()=>{ const sc=Math.min(1,max/Math.max(img.width,img.height)); const c=document.createElement('canvas'); c.width=Math.max(1,Math.round(img.width*sc)); c.height=Math.max(1,Math.round(img.height*sc)); c.getContext('2d').drawImage(img,0,0,c.width,c.height); let url=key==='bg'?c.toDataURL('image/jpeg',0.84):c.toDataURL('image/png'); if(url.length>1800000) url=c.toDataURL('image/jpeg',0.82); A[key]=url; putAsset(key,url).then(()=>{ renderThumbs(); send('assets',{A}); send('disp',{D:dispSettings()}); toast('Image added'); },e=>{ renderThumbs(); send('assets',{A}); send('disp',{D:dispSettings()}); toast(isQuota(e)?'Image too large to save for refresh — it will work until you reload':('Could not store that image: '+(e&&e.message||'unknown error')),'warn'); }); }; img.onerror=()=>toast('Could not read that image','warn'); img.src=rd.result; }; rd.readAsDataURL(file); }
 
 /* ----- spreadsheet import ----- */
 let pickState=null;
@@ -829,7 +906,9 @@ function updLive(){ if(IS_DISPLAY) return; const lb=$('livebar'); lb.classList.t
   $('lbPhase').className='pill'+(live?' live':''); $('lbPhase').lastElementChild.textContent=chipFor().text;
   $('lbCalled').textContent=G.calls.length; $('lbRem').textContent=rem;
   const nx=nextPrize(); $('lbNext').innerHTML=''; if(nx){ $('lbNext').append('Next prize: #'+nx.cn+' · '); const b=document.createElement('span'); b.textContent=nx.text+' (in '+nx.inCalls+')'; $('lbNext').appendChild(b); }
-  const pb=$('lbPlay'); pb.textContent=live?'❚❚ Pause':(ph==='ready'?'▶ Start draw':(ph==='winner'?'▶ Continue':(ph==='paused'?'▶ Continue':'Space'))); pb.disabled=['done','split','finalists'].includes(ph);
+  const pb=$('lbPlay'); pb.textContent=live?'❚❚ Pause':(ph==='ready'?'▶ Start draw':(ph==='winner'?'▶ Continue':(ph==='paused'?'▶ Continue':'Space'))); pb.disabled=!!revealSeq||['done','split','finalists'].includes(ph);
+  document.querySelectorAll('[data-cmd="next"]').forEach(b=>{ b.disabled=!!revealSeq||!!busy; });
+  const dp=$('dPlay'); if(dp) dp.disabled=!!revealSeq;
   syncSpeedUI();
   let sum=G.tickets.length+' tickets · '+G.calls.length+' called · '+rem+' remaining · started '+ts(G.created);
   if(G.grand!=null) sum='Finished — grand prize to '+G.tickets[G.grand].n+'. '+sum; if(ph==='split') sum='Finished — the finalists split the grand prize. '+sum;
@@ -866,6 +945,7 @@ document.addEventListener('keydown',e=>{
   let c=KEYMAP[k]; if(!c) return; if(!inShow&&['setup','welcome'].includes(c)&&c==='setup') return;
   if(e.target&&e.target.type==='range'&&/arrow/.test(k)) return;
   e.preventDefault(); if(e.repeat&&c!=='faster'&&c!=='slower') return;
+  if(revealSeq&&(c==='toggle'||c==='next')) return;
   if(IS_DISPLAY){ if(c==='setup') return; post({t:'cmd',c}); } else runCmd(c);
 });
 // show: auto-hide drawer + cursor
@@ -949,31 +1029,63 @@ function cleanSettings(x){ const o={}; if(!x||typeof x!=='object') return o; for
   if(o.lists&&!o.lists.length) delete o.lists;
   return o; }
 function setupStats(st){ const nt=parseNameLines(st.namesText||'').length; const L=(st.lists||[]).find(l=>l.id===st.listId)||(st.lists||[])[0]; const np=L?L.prizes.filter(p=>parseInt(p.call,10)>0).length:0; return {tickets:st.mode==='numbers'?null:nt,prizes:np}; }
-function setupIndex(){ const v=loadJSON(K_SETUPS); return Array.isArray(v)?v.filter(e=>e&&e.id&&e.name):[]; }
-function writeSetupIndex(ix){ return saveJSON(K_SETUPS,ix); }
 function lsSet(k,v){ try{ localStorage.setItem(k,v); return true; }catch(e){ return false; } }
 function lsDel(k){ try{ localStorage.removeItem(k); }catch(e){} }
-function gcSetupImages(){ const used=new Set(); setupIndex().forEach(e=>{ const d=loadJSON(K_SETUP+e.id); if(d&&d.assets) Object.values(d.assets).forEach(h=>h&&used.add(h)); });
-  try{ for(let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i); if(k&&k.startsWith(K_SIMG)&&!used.has(k.slice(K_SIMG.length))) localStorage.removeItem(k); } }catch(e){} }
-// returns true on success
-function storeSetup(name,settings,assets){ const ix=setupIndex(); const ex=ix.find(e=>e.name.toLowerCase()===name.toLowerCase()); const id=ex?ex.id:uid();
-  const refs={}; const added=[];
-  for(const k of ASSET_KEYS){ const url=assets[k]; if(!url){ refs[k]=null; continue; } const h=hstr(url); refs[k]=h; let have=null; try{ have=localStorage.getItem(K_SIMG+h); }catch(e){} if(have==null){ if(!lsSet(K_SIMG+h,url)){ added.forEach(x=>lsDel(K_SIMG+x)); return false; } added.push(h); } }
-  const st=setupStats(settings); const entry={id,name,saved:Date.now(),tickets:st.tickets,prizes:st.prizes,sig:setupSig(settings,assets)};
-  const prev=ex?localStorage.getItem(K_SETUP+id):null;
-  if(!lsSet(K_SETUP+id,JSON.stringify({v:1,name,settings,assets:refs}))){ added.forEach(x=>lsDel(K_SIMG+x)); return false; }
-  const nix=ix.filter(e=>e.id!==id); nix.unshift(entry);
-  if(!writeSetupIndex(nix)){ if(prev!=null) lsSet(K_SETUP+id,prev); else lsDel(K_SETUP+id); added.forEach(x=>lsDel(K_SIMG+x)); return false; }
-  gcSetupImages(); return true; }
-function readSetup(id){ const d=loadJSON(K_SETUP+id); if(!d||!d.settings) return null; const assets={}; ASSET_KEYS.forEach(k=>{ const h=d.assets&&d.assets[k]; let u=null; if(h){ try{ u=localStorage.getItem(K_SIMG+h); }catch(e){} } assets[k]=u||null; }); return {name:d.name,settings:d.settings,assets}; }
+function storageMsg(e){ if(isQuota(e)) return 'Not enough room in this browser — delete an old setup, or use “Export setup file”'; return 'Could not save the setup: '+((e&&e.message)||'unknown error'); }
+function isAppKey(k){ return k==='rr_flash'||k.startsWith('rr_settings_')||k.startsWith('rr_game_')||k.startsWith('rr_asset_')||k.startsWith('rr_acc_')||k.startsWith('rr_setups_')||k.startsWith('rr_setup_')||k.startsWith('rr_simg_'); }
+const DB_NAME='rr_db';
+let _dbp=null, idbOk=false, setupCache=[];
+function openDB(){ if(_dbp) return _dbp; _dbp=new Promise((resolve,reject)=>{ if(!('indexedDB' in window)){ reject(new Error('IndexedDB is not available')); return; } const req=indexedDB.open(DB_NAME,1); req.onupgradeneeded=()=>{ const db=req.result; if(!db.objectStoreNames.contains('images')) db.createObjectStore('images'); if(!db.objectStoreNames.contains('setups')) db.createObjectStore('setups',{keyPath:'id'}); if(!db.objectStoreNames.contains('kv')) db.createObjectStore('kv'); }; req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error||new Error('Could not open storage')); }); return _dbp; }
+function idbReq(store,mode,run){ return openDB().then(db=>new Promise((resolve,reject)=>{ let tx; try{ tx=db.transaction(store,mode); }catch(e){ reject(e); return; } let req; try{ req=run(tx.objectStore(store)); }catch(e){ reject(e); return; } req.onsuccess=()=>resolve(req.result); req.onerror=()=>reject(req.error||new Error('Storage request failed')); })); }
+const idbGet=(store,key)=>idbReq(store,'readonly',os=>os.get(key));
+const idbPut=(store,key,val)=>idbReq(store,'readwrite',os=>os.put(val,key));
+const idbPutObj=(store,val)=>idbReq(store,'readwrite',os=>os.put(val));
+const idbDel=(store,key)=>idbReq(store,'readwrite',os=>os.delete(key));
+const idbAll=(store)=>idbReq(store,'readonly',os=>os.getAll());
+const idbKeys=(store)=>idbReq(store,'readonly',os=>os.getAllKeys());
+function setupIndex(){ return setupCache; }
+async function ensureImage(h,url){ if(!h||!url) return; if((await idbGet('images',h))==null) await idbPut('images',h,url); }
+async function putAsset(key,url){ await storageReady(); if(!url) return clearAsset(key); const h=hstr(url); if(idbOk){ await ensureImage(h,url); await idbPut('kv','asset:'+key,h); lsDel(K_ASSET+key); return; } if(!lsSet(K_ASSET+key,url)){ const e=new DOMException('The quota has been exceeded.','QuotaExceededError'); throw e; } }
+async function clearAsset(key){ A[key]=null; lsDel(K_ASSET+key); if(idbOk){ try{ await idbDel('kv','asset:'+key); }catch(e){} } }
+async function resolveImage(h){ if(!h) return null; let u=null; if(idbOk){ try{ u=await idbGet('images',h); }catch(e){} } if(!u){ try{ u=localStorage.getItem(K_SIMG+h); }catch(e){} } if(!u){ for(const ak of ASSET_KEYS){ let live=A[ak]; if(!live){ try{ live=localStorage.getItem(K_ASSET+ak); }catch(e){} } if(live&&hstr(live)===h){ u=live; break; } } } return u||null; }
+async function gcImages(){ if(!idbOk) return; const keys=await idbKeys('images'); const keep=new Set(); const setups=await idbAll('setups'); (setups||[]).forEach(d=>{ if(d&&d.assets) Object.values(d.assets).forEach(h=>{ if(h) keep.add(h); }); }); for(const k of ASSET_KEYS){ const h=await idbGet('kv','asset:'+k); if(h) keep.add(h); } for(const h of keys||[]){ if(!keep.has(h)){ try{ await idbDel('images',h); }catch(e){} } } }
+async function migrateLegacy(){
+  for(const k of ASSET_KEYS){ let url=null; try{ url=localStorage.getItem(K_ASSET+k); }catch(e){} if(!url) continue; try{ const h=hstr(url); await ensureImage(h,url); await idbPut('kv','asset:'+k,h); lsDel(K_ASSET+k); }catch(e){} }
+  const ix=loadJSON(K_SETUPS); const seen=new Set();
+  if(Array.isArray(ix)){ for(const e of ix){ if(!e||!e.id||!e.name||seen.has(e.id)) continue; seen.add(e.id); let raw=null; try{ raw=localStorage.getItem(K_SETUP+e.id); }catch(err){} if(!raw) continue; let d; try{ d=JSON.parse(raw); }catch(err){ continue; } if(!d||!d.settings) continue;
+    try{ const refs={}; for(const k of ASSET_KEYS){ const h=d.assets&&d.assets[k]; refs[k]=h||null; if(!h) continue; let url=null; try{ url=localStorage.getItem(K_SIMG+h); }catch(err){} if(url) await ensureImage(h,url); } await idbPutObj('setups',{id:e.id,v:1,name:e.name,saved:e.saved||Date.now(),tickets:e.tickets,prizes:e.prizes,sig:e.sig||'',settings:d.settings,assets:refs}); lsDel(K_SETUP+e.id); }catch(err){} }
+    try{ if(seen.size) lsDel(K_SETUPS); }catch(e){} }
+  try{ const keys=[]; for(let i=0;i<localStorage.length;i++){ const k=localStorage.key(i); if(k) keys.push(k); }
+    for(const k of keys){ if(!k.startsWith(K_SIMG)&&!k.startsWith(K_SETUP)) continue; const val=localStorage.getItem(k); if(!val){ lsDel(k); continue; }
+      if(k.startsWith(K_SIMG)){ const h=k.slice(K_SIMG.length); try{ await ensureImage(h,val); lsDel(k); }catch(e){} }
+      else { const id=k.slice(K_SETUP.length); if(id==='s_v1'||k===K_SETUPS) continue; let d=null; try{ d=JSON.parse(val); }catch(e){} if(!(d&&d.settings&&d.name)) continue; try{ const refs={}; for(const ak of ASSET_KEYS){ const h=d.assets&&d.assets[ak]; refs[ak]=h||null; if(h){ let url=null; try{ url=localStorage.getItem(K_SIMG+h); }catch(err){} if(url) await ensureImage(h,url); } } await idbPutObj('setups',{id,v:1,name:d.name,saved:Date.now(),settings:d.settings,assets:refs,tickets:null,prizes:null,sig:''}); lsDel(k); }catch(e){} } } }catch(e){}
+}
+async function hydrateAssets(){ if(!idbOk) return; for(const k of ASSET_KEYS){ try{ const h=await idbGet('kv','asset:'+k); if(!h) continue; const url=await idbGet('images',h); if(url) A[k]=url; }catch(e){} } }
+async function loadSetupCache(){ if(!idbOk){ const v=loadJSON(K_SETUPS); setupCache=Array.isArray(v)?v.filter(e=>e&&e.id&&e.name):[]; return; } const all=await idbAll('setups'); const by=new Map(); (all||[]).forEach(d=>{ if(!d||!d.id||!String(d.name||'').trim()||!d.settings) return; if(!by.has(d.id)) by.set(d.id,{id:d.id,name:d.name,saved:d.saved||0,tickets:d.tickets,prizes:d.prizes,sig:d.sig||''}); }); setupCache=[...by.values()].sort((a,b)=>(b.saved||0)-(a.saved||0)); }
+function storageReady(){ if(storageReady.p) return storageReady.p; storageReady.p=(async()=>{ try{ await openDB(); idbOk=true; await migrateLegacy(); await hydrateAssets(); await loadSetupCache(); await gcImages(); }catch(e){ console.error(e); idbOk=false; const v=loadJSON(K_SETUPS); setupCache=Array.isArray(v)?v.filter(x=>x&&x.id&&x.name):[]; } })(); return storageReady.p; }
+async function storeSetup(name,settings,assets){ await storageReady(); const ix=setupIndex(); const ex=ix.find(e=>e.name.toLowerCase()===name.toLowerCase()); const id=ex?ex.id:uid();
+  try{
+    const refs={};
+    for(const k of ASSET_KEYS){ const url=assets[k]; if(!url){ refs[k]=null; continue; } const h=hstr(url); refs[k]=h; if(idbOk) await ensureImage(h,url); else { let have=null; try{ have=localStorage.getItem(K_SIMG+h); }catch(e){} if(have==null){ let live=false; for(const ak of ASSET_KEYS){ try{ if(localStorage.getItem(K_ASSET+ak)===url) live=true; }catch(e){} } if(!live&&!lsSet(K_SIMG+h,url)) throw new DOMException('The quota has been exceeded.','QuotaExceededError'); } } }
+    const st=setupStats(settings); const sig=setupSig(settings,assets); const savedAt=Date.now();
+    const rec={id,v:1,name,saved:savedAt,tickets:st.tickets,prizes:st.prizes,sig,settings,assets:refs};
+    if(idbOk) await idbPutObj('setups',rec);
+    else { if(!lsSet(K_SETUP+id,JSON.stringify({v:1,name,settings,assets:refs}))) throw new DOMException('The quota has been exceeded.','QuotaExceededError'); const nix=ix.filter(e=>e.id!==id); nix.unshift({id,name,saved:savedAt,tickets:st.tickets,prizes:st.prizes,sig}); if(!saveJSON(K_SETUPS,nix)) throw new Error('Could not update the setup list'); }
+    setupCache=setupCache.filter(e=>e.id!==id); setupCache.unshift({id,name,saved:savedAt,tickets:st.tickets,prizes:st.prizes,sig});
+    if(idbOk) await gcImages();
+    return {ok:true};
+  }catch(e){ return {ok:false,error:e}; }
+}
+async function readSetup(id){ await storageReady(); let d=null; if(idbOk){ try{ d=await idbGet('setups',id); }catch(e){} } if(!d){ try{ const raw=localStorage.getItem(K_SETUP+id); if(raw) d=JSON.parse(raw); }catch(e){} } if(!d||!d.settings) return null; const assets={}; for(const k of ASSET_KEYS){ assets[k]=await resolveImage(d.assets&&d.assets[k]); } return {name:d.name,settings:d.settings,assets}; }
+async function deleteSetupById(id){ await storageReady(); if(idbOk){ try{ await idbDel('setups',id); }catch(e){} } lsDel(K_SETUP+id); setupCache=setupCache.filter(e=>e.id!==id); if(!idbOk) saveJSON(K_SETUPS,setupCache); else await gcImages(); }
 function gameWord(){ if(!G||!G.calls.length) return ''; return (['done','split'].includes(G.phase)?'the finished game':'the game in progress ('+G.calls.length+' called)'); }
 // replace the whole setup and start clean (no game); reloads so every panel is rebuilt from storage
-function applySetup(settings,assets,name,flash){
-  gen++; try{ stopTimers(); }catch(e){} busy=false; G=null; saveGame();
+async function applySetup(settings,assets,name,flash){
+  gen++; try{ stopTimers(); }catch(e){} busy=false; revealSeq=false; G=null; saveGame();
   const ns=Object.assign(JSON.parse(JSON.stringify(DEF)),cleanSettings(settings),{view:'setup',setupName:name||''});
   if(!ns.lists.find(l=>l.id===ns.listId)) ns.listId=ns.lists[0].id;
   S=ns; clearTimeout(_st); saveJSON(K_SET,S);
-  let lost=false; ASSET_KEYS.forEach(k=>{ const u=assets&&assets[k]||null; A[k]=u; if(u){ if(!lsSet(K_ASSET+k,u)) lost=true; } else lsDel(K_ASSET+k); });
+  let lost=false; for(const k of ASSET_KEYS){ const u=assets&&assets[k]||null; A[k]=u; try{ if(u) await putAsset(k,u); else await clearAsset(k); }catch(e){ lost=true; } }
   try{ sessionStorage.setItem('rr_flash',(flash||'Setup loaded')+(lost?' — one image was too large to keep after a refresh':'')); }catch(e){}
   location.reload(); }
 function updSetupCur(){ const el=$('setupCur'); if(!el) return; const nm=String(S.setupName||'').trim(); const n=setupIndex().length;
@@ -992,11 +1104,11 @@ function renderSetupMenu(){ const m=$('setupMenu'); m.replaceChildren(); const i
     const del=document.createElement('button'); del.type='button'; del.className='sb-del'; del.title='Delete “'+e.name+'”'; del.setAttribute('aria-label','Delete '+e.name);
     del.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></svg>';
     del.onclick=async ev=>{ ev.stopPropagation(); closeSetupMenu(); if(!(await ask('Delete “'+e.name+'”?','The saved setup is removed from this browser. Your current names, prizes and game are not changed.',{ok:'Delete',danger:true}))) return;
-      lsDel(K_SETUP+e.id); writeSetupIndex(setupIndex().filter(x=>x.id!==e.id)); gcSetupImages(); updSetupCur(); toast('Deleted “'+e.name+'”'); };
+      await deleteSetupById(e.id); updSetupCur(); toast('Deleted “'+e.name+'”'); };
     r.append(b,del); m.appendChild(r); }); }
 function closeSetupMenu(){ $('setupMenu').classList.add('hidden'); $('btnLoadSetup').setAttribute('aria-expanded','false'); }
 function toggleSetupMenu(){ const m=$('setupMenu'); if(!m.classList.contains('hidden')) return closeSetupMenu(); renderSetupMenu(); m.classList.remove('hidden'); $('btnLoadSetup').setAttribute('aria-expanded','true'); }
-async function loadSavedSetup(id){ const d=readSetup(id); if(!d) return toast('That setup could not be read','warn');
+async function loadSavedSetup(id){ const d=await readSetup(id); if(!d) return toast('That setup could not be read','warn');
   const gw=gameWord(); const txt='This replaces the current names, prizes and settings with “'+d.name+'”.'+(gw?' It also clears '+gw+' — download the results first if you need them.':'');
   if(!(await ask('Load “'+d.name+'”?',txt,{ok:'Load setup'}))) return;
   applySetup(d.settings,d.assets,d.name,'Loaded “'+d.name+'”'); }
@@ -1005,7 +1117,7 @@ async function saveSetupAs(){ const suggest=String(S.setupName||'').trim()||(Str
   if(name==null) return; name=String(name).trim().slice(0,80); if(!name) return toast('Give the setup a name','warn');
   const ex=setupIndex().find(e=>e.name.toLowerCase()===name.toLowerCase());
   if(ex&&ex.name.toLowerCase()!==String(S.setupName||'').toLowerCase()){ if(!(await ask('Replace “'+ex.name+'”?','A saved setup with this name already exists.',{ok:'Replace'}))) return; }
-  if(!storeSetup(name,setupSettings(),setupAssets())) return toast('Not enough room in this browser — delete an old setup, or use “Export setup file”','warn');
+  const saved=await storeSetup(name,setupSettings(),setupAssets()); if(!saved.ok) return toast(storageMsg(saved.error),'warn');
   S.setupName=name; saveSettings(); updSetupCur(); toast('Saved “'+name+'”'); }
 function slugify(s){ return String(s||'').trim().replace(/[\\/:*?"<>|]+/g,'').replace(/\s+/g,' ').slice(0,60)||'Raffle setup'; }
 function exportSetupFile(){ const name=String(S.setupName||'').trim()||String(S.title||'').trim()||'Raffle setup';
@@ -1020,8 +1132,8 @@ async function importSetupFile(f){ let data; try{ data=JSON.parse(await f.text()
   const ex=setupIndex().find(e=>e.name.toLowerCase()===name.toLowerCase()); const same=ex&&ex.sig===setupSig(setupSettingsFrom(settings),assets);
   const txt=(st.tickets!=null?st.tickets+' tickets · ':'')+st.prizes+' prizes. This replaces the current names, prizes and settings'+(gw?', and clears '+gw:'')+'. '+(ex?(same?'It matches your saved “'+ex.name+'”.':'It also updates your saved “'+ex.name+'” to this version.'):'It is also added to your saved setups.');
   if(!(await ask('Import “'+name+'”?',txt,{ok:'Import setup'}))) return;
-  const saved=storeSetup(name,setupSettingsFrom(settings),assets);
-  applySetup(settings,assets,name,'Imported “'+name+'”'+(saved?'':' (not enough room to add it to saved setups)')); }
+  const saved=await storeSetup(name,setupSettingsFrom(settings),assets);
+  applySetup(settings,assets,name,'Imported “'+name+'”'+(saved.ok?'':(' ('+storageMsg(saved.error)+')'))); }
 function setupSettingsFrom(settings){ const full=Object.assign(JSON.parse(JSON.stringify(DEF)),settings); const o={}; for(const k of Object.keys(DEF)){ if(SKIP_KEYS.includes(k)) continue; o[k]=full[k]; } return o; }
 function initSetups(){
   $('btnSaveSetup').onclick=saveSetupAs; $('btnLoadSetup').onclick=e=>{ e.stopPropagation(); toggleSetupMenu(); };
@@ -1035,9 +1147,14 @@ function initSetups(){
 async function resetAsk(){ if(!G) return toast('No game to reset');
   if(await ask('Reset the game?','Clears the draw: calls, winners and the audit log. Your names, prizes and settings stay, ready for a new game. Tip: download the results first if you need them.',{ok:'Reset game',danger:true})) resetGame(); }
 async function startFresh(){ if(!(await ask('Start fresh?','Clears the names, prizes, images and settings in this browser, and the game.'+(S.setupName&&!$('setupCur').classList.contains('dirty')?'':' If you may want this setup again, save it first.')+' Your saved setups are kept.',{ok:'Start fresh',danger:true}))) return false;
-  gen++; try{ stopTimers(); }catch(e){} busy=false; G=null; saveGame(); S=JSON.parse(JSON.stringify(DEF)); clearTimeout(_st); saveJSON(K_SET,S);
-  ASSET_KEYS.forEach(k=>{ A[k]=null; lsDel(K_ASSET+k); }); lsDel(K_ACC); try{ sessionStorage.setItem('rr_flash','Fresh start — add your names to begin'); }catch(e){}
+  gen++; try{ stopTimers(); }catch(e){} busy=false; revealSeq=false; G=null; saveGame(); S=JSON.parse(JSON.stringify(DEF)); clearTimeout(_st); saveJSON(K_SET,S);
+  for(const k of ASSET_KEYS){ try{ await clearAsset(k); }catch(e){} } if(idbOk){ try{ await gcImages(); }catch(e){} } lsDel(K_ACC); try{ sessionStorage.setItem('rr_flash','Fresh start — add your names to begin'); }catch(e){}
   location.reload(); return true; }
+function dropAppKeys(stor){ try{ const keys=[]; for(let i=0;i<stor.length;i++){ const k=stor.key(i); if(k&&isAppKey(k)) keys.push(k); } keys.forEach(k=>{ try{ stor.removeItem(k); }catch(e){} }); }catch(e){} }
+async function wipeAppStorage(){ try{ if(_dbp){ const db=await _dbp; db.close(); } }catch(e){} _dbp=null; idbOk=false; storageReady.p=null; setupCache=[]; dropAppKeys(localStorage); dropAppKeys(sessionStorage);
+  try{ if('indexedDB' in window){ await new Promise(resolve=>{ const req=indexedDB.deleteDatabase(DB_NAME); req.onsuccess=()=>resolve(); req.onerror=()=>resolve(); req.onblocked=()=>setTimeout(resolve,300); }); } }catch(e){} }
+async function factoryReset(){ if(!(await ask('Factory reset — restore all default settings?','This erases everything Reverse Raffle has saved in this browser: names and ticket lists, prizes, saved setups, uploaded images (logo, background, welcome and sponsor), colors, text, sounds, reveal timing, and the current game including winners and history. Other websites on this address are not touched. Export a setup file first (Saved setups → Export setup file) if you may want this setup again. The page will reload to a fresh first-run state. This is not “Restart game”, which keeps your settings.',{ok:'Factory reset',danger:true}))) return;
+  wiping=true; clearTimeout(_st); await wipeAppStorage(); location.reload(); }
 const RO_IC={cont:'<path d="M7 4.5v15l12-7.5z" fill="currentColor" stroke="none"/>',new:'<path d="M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.2L3 16M3 21v-5h5"/>',fresh:'<path d="M11 3.5l1.8 4.9 4.9 1.8-4.9 1.8L11 16.9l-1.8-4.9-4.9-1.8 4.9-1.8z"/><path d="M18.5 14.5l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8z"/>'};
 function reopenChoice(onContinue){ const done=['done','split'].includes(G.phase); const w=G.calls.filter(c=>c.p).length; const last=G.calls.length?G.calls[G.calls.length-1].at:G.created;
   const opt=(a,t,d,pri)=>'<button type="button" class="ro-opt'+(pri?' pri':'')+'" data-ro="'+a+'"><span class="ro-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'+RO_IC[a]+'</svg></span><span class="ro-tx"><b>'+t+'</b><span>'+d+'</span></span></button>';
@@ -1070,6 +1187,7 @@ if(IS_DISPLAY){
   hello(); setInterval(hello,2000); addEventListener('beforeunload',()=>post({t:'bye'}));
   R.D=dispSettings(); R.applyD(); $('ovWel').classList.add('on'); R.welcomeText(null);
 } else {
+  const boot=()=>{
   bindForm(); syncForm(); renderSeqs(); renderLists(); renderCount(); TTS.init();
   if(/^https?:/.test(location.protocol)) $('dlOffline').classList.remove('hidden');
   if(G){ // crash protection: resume exactly where we left off
@@ -1083,6 +1201,8 @@ if(IS_DISPLAY){
   if(G&&(G.calls.length>0||['done','split'].includes(G.phase))) reopenChoice(resume);
   else { if(G&&S.view==='show') openShowHere(); if(G&&G.handled<G.calls.length) afterReveal(G.calls.length-1,true,null); }
   document.addEventListener('pointerdown',()=>Snd.init(),{once:false,passive:true});
+  };
+  storageReady().then(boot,boot);
 }
 window.RR={ get S(){return S;}, get G(){return G;}, randInt, cmd:runCmd, newGame, openShowHere, goSetup, remaining, effSpeed, isBusy:()=>busy, buildDyn, restartGame, settingsChanged, syncForm };
 })();
